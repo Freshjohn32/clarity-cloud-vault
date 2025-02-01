@@ -4,8 +4,9 @@
 (define-constant contract-owner tx-sender)
 (define-constant err-unauthorized (err u100))
 (define-constant err-not-found (err u101))
-(define-constant err-already-exists (err u102))
+(define-constant err-already-exists (err u102)) 
 (define-constant err-insufficient-funds (err u103))
+(define-constant err-invalid-payment (err u104))
 
 ;; Data Variables
 (define-data-var min-storage-price uint u100) ;; minimum price per GB in STX
@@ -18,18 +19,22 @@
     price-per-gb: uint,      ;; in STX
     total-clients: uint,
     reputation-score: uint,
-    active: bool
+    active: bool,
+    earnings: uint           ;; total STX earned
   }
 )
 
 ;; Storage Requests
-(define-map storage-requests uint
+(define-map storage-requests uint 
   {
     client: principal,
     provider: principal,
     space-requested: uint,    ;; in GB
     price-per-gb: uint,
-    status: (string-ascii 20) ;; pending, accepted, rejected
+    status: (string-ascii 20), ;; pending, accepted, rejected
+    payment-status: (string-ascii 20), ;; unpaid, paid
+    last-payment: uint,        ;; block height of last payment
+    payment-due: uint          ;; next payment due at block height
   }
 )
 
@@ -47,7 +52,8 @@
         price-per-gb: price-per-gb,
         total-clients: u0,
         reputation-score: u100,
-        active: true
+        active: true,
+        earnings: u0
       }
     )
     (var-set provider-count (+ (var-get provider-count) u1))
@@ -68,12 +74,13 @@
   )
 )
 
-;; Request Storage
+;; Request Storage 
 (define-public (request-storage (provider principal) (space-needed uint))
   (let
     (
       (provider-data (unwrap! (map-get? providers provider) err-not-found))
       (request-id (+ (var-get provider-count) u1))
+      (current-block (unwrap! block-height u0))
     )
     (asserts! (>= (get available-space provider-data) space-needed) err-insufficient-funds)
     (map-set storage-requests request-id
@@ -82,10 +89,46 @@
         provider: provider,
         space-requested: space-needed,
         price-per-gb: (get price-per-gb provider-data),
-        status: "pending"
+        status: "pending",
+        payment-status: "unpaid",
+        last-payment: u0,
+        payment-due: (+ current-block u144) ;; Payment due in ~24 hours
       }
     )
     (ok request-id)
+  )
+)
+
+;; Process Payment
+(define-public (make-payment (request-id uint))
+  (let
+    (
+      (request (unwrap! (map-get? storage-requests request-id) err-not-found))
+      (provider-data (unwrap! (map-get? providers (get provider request)) err-not-found))
+      (payment-amount (* (get space-requested request) (get price-per-gb request)))
+      (current-block (unwrap! block-height u0))
+    )
+    (asserts! (is-eq (get client request) tx-sender) err-unauthorized)
+    (try! (stx-transfer? payment-amount tx-sender (get provider request)))
+    
+    ;; Update provider earnings
+    (map-set providers (get provider request)
+      (merge provider-data 
+        { earnings: (+ (get earnings provider-data) payment-amount) }
+      )
+    )
+    
+    ;; Update payment status
+    (map-set storage-requests request-id
+      (merge request 
+        {
+          payment-status: "paid",
+          last-payment: current-block,
+          payment-due: (+ current-block u144)
+        }
+      )
+    )
+    (ok true)
   )
 )
 
@@ -123,4 +166,8 @@
 
 (define-read-only (get-total-providers)
   (ok (var-get provider-count))
+)
+
+(define-read-only (get-provider-earnings (provider principal))
+  (ok (get earnings (unwrap! (map-get? providers provider) err-not-found)))
 )
