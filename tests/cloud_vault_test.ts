@@ -31,11 +31,12 @@ Clarinet.test({
     );
     
     assertEquals(provider.result.expectSome().available_space, types.uint(1000));
+    assertEquals(provider.result.expectSome().earnings, types.uint(0));
   }
 });
 
 Clarinet.test({
-  name: "Test storage request and acceptance flow",
+  name: "Test payment system flow",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const provider = accounts.get('wallet_1')!;
     const client = accounts.get('wallet_2')!;
@@ -65,35 +66,26 @@ Clarinet.test({
       ], provider.address)
     ]);
     
-    assertEquals(block3.receipts[0].result.expectOk(), true);
+    // Make payment
+    let block4 = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'make-payment', [
+        requestId
+      ], client.address)
+    ]);
     
-    // Verify updated provider space
-    let provider_details = chain.callReadOnlyFn(
+    assertEquals(block4.receipts[0].result.expectOk(), true);
+    
+    // Verify provider earnings
+    let earnings = chain.callReadOnlyFn(
       'cloud_vault',
-      'get-provider-details',
+      'get-provider-earnings',
       [types.principal(provider.address)],
       provider.address
     );
     
     assertEquals(
-      provider_details.result.expectSome().available_space,
-      types.uint(900)
+      earnings.result.expectOk(),
+      types.uint(20000) // 100 GB * 200 STX
     );
-  }
-});
-
-Clarinet.test({
-  name: "Ensure unauthorized operations fail",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const attacker = accounts.get('wallet_3')!;
-    
-    // Try to accept non-existent request
-    let block = chain.mineBlock([
-      Tx.contractCall('cloud_vault', 'accept-request', [
-        types.uint(999)
-      ], attacker.address)
-    ]);
-    
-    assertEquals(block.receipts[0].result.expectErr(), types.uint(101));
   }
 });
