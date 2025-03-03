@@ -8,7 +8,7 @@ import {
 import { assertEquals } from 'https://deno.land/std@0.90.0/testing/asserts.ts';
 
 Clarinet.test({
-  name: "Ensure that providers can register",
+  name: "Ensure that providers can register with stake",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
     const provider1 = accounts.get('wallet_1')!;
@@ -22,7 +22,6 @@ Clarinet.test({
     
     assertEquals(block.receipts[0].result.expectOk(), true);
     
-    // Verify provider details
     let provider = chain.callReadOnlyFn(
       'cloud_vault',
       'get-provider-details',
@@ -30,13 +29,14 @@ Clarinet.test({
       deployer.address
     );
     
-    assertEquals(provider.result.expectSome().available_space, types.uint(1000));
-    assertEquals(provider.result.expectSome().earnings, types.uint(0));
+    let providerData = provider.result.expectSome();
+    assertEquals(providerData.stake, types.uint(1000000));
+    assertEquals(providerData.available_space, types.uint(1000));
   }
 });
 
 Clarinet.test({
-  name: "Test payment system flow",
+  name: "Test payment and withdrawal functionality",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const provider = accounts.get('wallet_1')!;
     const client = accounts.get('wallet_2')!;
@@ -49,43 +49,35 @@ Clarinet.test({
       ], provider.address)
     ]);
     
-    // Request storage
-    let block2 = chain.mineBlock([
-      Tx.contractCall('cloud_vault', 'request-storage', [
-        types.principal(provider.address),
-        types.uint(100)
-      ], client.address)
-    ]);
-    
-    const requestId = block2.receipts[0].result.expectOk();
-    
-    // Accept request
-    let block3 = chain.mineBlock([
-      Tx.contractCall('cloud_vault', 'accept-request', [
-        requestId
-      ], provider.address)
-    ]);
-    
     // Make payment
-    let block4 = chain.mineBlock([
+    let block2 = chain.mineBlock([
       Tx.contractCall('cloud_vault', 'make-payment', [
-        requestId
+        types.uint(1),
+        types.uint(200)
       ], client.address)
     ]);
     
-    assertEquals(block4.receipts[0].result.expectOk(), true);
+    // Test withdrawal
+    let block3 = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'withdraw-earnings', 
+        [], provider.address)
+    ]);
     
-    // Verify provider earnings
-    let earnings = chain.callReadOnlyFn(
-      'cloud_vault',
-      'get-provider-earnings',
-      [types.principal(provider.address)],
-      provider.address
-    );
+    assertEquals(block3.receipts[0].result.expectOk(), types.uint(200));
+  }
+});
+
+Clarinet.test({
+  name: "Test request cancellation",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const client = accounts.get('wallet_2')!;
     
-    assertEquals(
-      earnings.result.expectOk(),
-      types.uint(20000) // 100 GB * 200 STX
-    );
+    let block = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'cancel-request', [
+        types.uint(1)
+      ], client.address)
+    ]);
+    
+    assertEquals(block.receipts[0].result.expectOk(), true);
   }
 });
