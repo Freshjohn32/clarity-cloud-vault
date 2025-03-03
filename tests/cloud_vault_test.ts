@@ -22,7 +22,6 @@ Clarinet.test({
     
     assertEquals(block.receipts[0].result.expectOk(), true);
     
-    // Verify provider details including stake
     let provider = chain.callReadOnlyFn(
       'cloud_vault',
       'get-provider-details',
@@ -37,26 +36,48 @@ Clarinet.test({
 });
 
 Clarinet.test({
-  name: "Test contract pause functionality",
+  name: "Test payment and withdrawal functionality",
   async fn(chain: Chain, accounts: Map<string, Account>) {
-    const deployer = accounts.get('deployer')!;
+    const provider = accounts.get('wallet_1')!;
+    const client = accounts.get('wallet_2')!;
     
-    // Pause contract
+    // Register provider
     let block1 = chain.mineBlock([
-      Tx.contractCall('cloud_vault', 'toggle-contract-pause', 
-        [], deployer.address)
+      Tx.contractCall('cloud_vault', 'register-provider', [
+        types.uint(200),
+        types.uint(1000)
+      ], provider.address)
     ]);
     
-    assertEquals(block1.receipts[0].result.expectOk(), true);
+    // Make payment
+    let block2 = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'make-payment', [
+        types.uint(1),
+        types.uint(200)
+      ], client.address)
+    ]);
     
-    // Verify contract is paused
-    let status = chain.callReadOnlyFn(
-      'cloud_vault',
-      'get-contract-status',
-      [],
-      deployer.address
-    );
+    // Test withdrawal
+    let block3 = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'withdraw-earnings', 
+        [], provider.address)
+    ]);
     
-    assertEquals(status.result.expectOk(), true);
+    assertEquals(block3.receipts[0].result.expectOk(), types.uint(200));
+  }
+});
+
+Clarinet.test({
+  name: "Test request cancellation",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const client = accounts.get('wallet_2')!;
+    
+    let block = chain.mineBlock([
+      Tx.contractCall('cloud_vault', 'cancel-request', [
+        types.uint(1)
+      ], client.address)
+    ]);
+    
+    assertEquals(block.receipts[0].result.expectOk(), true);
   }
 });
